@@ -14,8 +14,7 @@ end
 function GaussianCriterion:updateGradInput(input, target)
     -- Verify again for correct handling of 0.5 multiplication
 	self.gradInput = {}
-    self.gradInput[1] = torch.exp(-input[2]):cmul(torch.add(target,-1,input[1]))
-    self.gradInput[2] = torch.exp(-input[2]):cmul(torch.add(target,-1,input[1]):pow(2)):add(-0.5)
-
-    return self.gradInput
+  self.gradInput[1] = torch.exp(-input[2]):cmul(torch.add(target,-1,input[1]))
+  self.gradInput[2] = torch.exp(-input[2]):cmul(torch.add(target,-1,input[1]):pow(2)):add(-0.5)
+  return self.gradInput
 end

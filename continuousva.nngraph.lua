@@ -2,8 +2,10 @@
 require 'sys'
 require 'torch'
 require 'nn'
+require 'nngraph'
 require 'xlua'
 require 'optim'
+require 'gnuplot'
 
 --Packages necessary for SGVB
 require 'Reparametrize'
@@ -15,7 +17,6 @@ require 'LinearVA'
 
 --For loading data files
 require 'load'
-
 
 data = loadfreyfaces('datasets/freyfaces.hdf5')
 
@@ -29,43 +30,46 @@ batchSize = 20
 torch.manualSeed(1)
 
 --The model
+function make_encoder()
+	local x = nn.Identity()()
+	local z = nn.Linear(dim_input,hidden_units_encoder)(x)
+	z = nn.SoftPlus()(z)
+	local mu = nn.Linear(hidden_units_encoder,dim_hidden)(z)
+	local si = nn.Linear(hidden_units_encoder,dim_hidden)(z)
+	return nn.gModule({x},{mu,si})
+end
+
+
 
 --Encoding layer
-encoder = nn.Sequential()
-encoder:add(nn.LinearVA(dim_input,hidden_units_encoder))
+encoder = make_encoder()
 
-encoder:add(nn.SoftPlus())
+function make_va()
+	local x = nn.Identity()()
+	local z = nn.Linear(dim_input,hidden_units_encoder)(x)
+	z = nn.SoftPlus()(z)
+	local mu = nn.Linear(hidden_units_encoder,dim_hidden)(z)
+	local si = nn.Linear(hidden_units_encoder,dim_hidden)(z)
 
-z = nn.ConcatTable()
-z:add(nn.LinearVA(hidden_units_encoder, dim_hidden))
-z:add(nn.LinearVA(hidden_units_encoder, dim_hidden))
 
-encoder:add(z)
+	local va = nn.Reparametrize(dim_hidden)({mu,si})
+	va = nn.Linear(dim_hidden, hidden_units_decoder)(va)
+	va = nn.SoftPlus()(va)
 
-va = nn.Sequential()
-va:add(encoder)
+	local one = nn.Sigmoid()(nn.Linear(hidden_units_decoder, dim_input)(va))
+	local two = nn.Copy()(nn.Linear(hidden_units_decoder, dim_input)(va))
 
---Reparametrization step
-va:add(nn.Reparametrize(dim_hidden))
+	local gaussian = nn.GaussianCriterion()({nn.Identity()({one,two}),x})
+	local kld = nn.KLDCriterion()({nn.Identity()({mu,si}),x})
+	return nn.gModule({x},{gaussian,kld,one,two})
+end
 
---Decoding layer
-va:add(nn.LinearVA(dim_hidden, hidden_units_decoder))
-va:add(nn.SoftPlus())
 
-decoder = nn.ConcatTable()
-decoder:add(nn.LinearVA(hidden_units_decoder, dim_input))
-decoder:add(nn.LinearVA(hidden_units_decoder, dim_input))
-
-decoder2 = nn.ParallelTable()
-decoder2:add(nn.Sigmoid())
-decoder2:add(nn.Copy())
-
-va:add(decoder)
-va:add(decoder2)
+va = make_va()
 
 --Optimization criteria
-Gaussian = nn.GaussianCriterion()
-KLD = nn.KLDCriterion()
+--Gaussian = nn.GaussianCriterion()
+--KLD = nn.KLDCriterion()
 
 parameters, gradients = va:getParameters()
 
@@ -74,7 +78,7 @@ config = {
 }
 
 state = {}
-
+zero = torch.zeros(batchSize,dim_input)
 epoch = 0
 while true do
     epoch = epoch + 1
@@ -104,16 +108,26 @@ while true do
 
             va:zeroGradParameters()
 
-            local f = va:forward(batch)
+						local encode_img = batch[1]:reshape(28,20)
+						gnuplot.figure(1)
+						gnuplot.imagesc(encode_img,'encode')
 
-            local err = Gaussian:forward(f, batch)
-            local df_dw = Gaussian:backward(f, batch)
-						
-            va:backward(batch,df_dw)
+            local err, KLDerr, f1, f2 = unpack(va:forward(batch))
+						print(err)
+						local decode1_img = f1[1]:reshape(28,20)
+						local decode2_img = f2[1]:reshape(28,20)
+						gnuplot.figure(2)
+						gnuplot.imagesc(decode1_img,'decode1')
+						gnuplot.figure(3)
+						gnuplot.imagesc(decode2_img,'decode2')
 
-            local KLDerr = KLD:forward(va:get(1).output, batch)
-            local de_dw = KLD:backward(va:get(1).output, batch)
-            encoder:backward(batch,de_dw)
+            --local err = Gaussian:forward(f, batch)
+            --local df_dw = Gaussian:backward(f, batch)
+            va:backward(batch,{torch.ones(1),torch.ones(1),zero,zero})
+
+            --local KLDerr = KLD:forward(va:get(1).output, batch)
+            --local de_dw = KLD:backward(va:get(1).output, batch)
+            --encoder:backward(batch,de_dw)
 
             local lowerbound = err  + KLDerr
 
