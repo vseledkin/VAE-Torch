@@ -59,17 +59,13 @@ function make_va()
 	local one = nn.Sigmoid()(nn.Linear(hidden_units_decoder, dim_input)(va))
 	local two = nn.Copy()(nn.Linear(hidden_units_decoder, dim_input)(va))
 
-	local gaussian = nn.GaussianCriterion()({nn.Identity()({one,two}),x})
-	local kld = nn.KLDCriterion()({nn.Identity()({mu,si}),x})
+	local gaussian = nn.GaussianCriterionn()({nn.JoinTable(2)({one,two}),x})
+	local kld = nn.KLDCriterionn()({nn.JoinTable(2)({mu,si}),x})
 	return nn.gModule({x},{gaussian,kld,one,two})
 end
 
 
 va = make_va()
-
---Optimization criteria
---Gaussian = nn.GaussianCriterion()
---KLD = nn.KLDCriterion()
 
 parameters, gradients = va:getParameters()
 
@@ -108,35 +104,31 @@ while true do
 
             va:zeroGradParameters()
 
+
+            local err, KLDerr, f1, f2 = unpack(va:forward(batch))
+---[[
 						local encode_img = batch[1]:reshape(28,20)
 						gnuplot.figure(1)
 						gnuplot.imagesc(encode_img,'encode')
-
-            local err, KLDerr, f1, f2 = unpack(va:forward(batch))
-						print(err)
+						print("->>>"..err[1].."|"..KLDerr[1].."|")
 						local decode1_img = f1[1]:reshape(28,20)
 						local decode2_img = f2[1]:reshape(28,20)
 						gnuplot.figure(2)
 						gnuplot.imagesc(decode1_img,'decode1')
 						gnuplot.figure(3)
 						gnuplot.imagesc(decode2_img,'decode2')
-
-            --local err = Gaussian:forward(f, batch)
-            --local df_dw = Gaussian:backward(f, batch)
+--]]
             va:backward(batch,{torch.ones(1),torch.ones(1),zero,zero})
+						-- draw sample from nothing
 
-            --local KLDerr = KLD:forward(va:get(1).output, batch)
-            --local de_dw = KLD:backward(va:get(1).output, batch)
-            --encoder:backward(batch,de_dw)
-
-            local lowerbound = err  + KLDerr
+            local lowerbound = err + KLDerr
 
             return lowerbound, gradients
         end
 
         x, batchlowerbound = optim.adagrad(opfunc, parameters, config, state)
 
-        lowerbound = lowerbound + batchlowerbound[1]
+        lowerbound = lowerbound + batchlowerbound[1][1]
     end
 
     print("\nEpoch: " .. epoch .. " Lowerbound: " .. lowerbound/N .. " time: " .. sys.clock() - time)

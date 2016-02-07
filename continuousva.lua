@@ -4,7 +4,7 @@ require 'torch'
 require 'nn'
 require 'xlua'
 require 'optim'
-
+require 'gnuplot'
 --Packages necessary for SGVB
 require 'Reparametrize'
 require 'GaussianCriterion'
@@ -104,24 +104,34 @@ while true do
 
             va:zeroGradParameters()
 
+            local encode_img = batch[1]:reshape(28,20)
+						gnuplot.figure(1)
+						gnuplot.imagesc(encode_img,'encode')
+
             local f = va:forward(batch)
+            local decode1_img = f[1][1]:reshape(28,20)
+            local decode2_img = f[2][1]:reshape(28,20)
+            gnuplot.figure(2)
+            gnuplot.imagesc(decode1_img,'decode1')
+            gnuplot.figure(3)
+            gnuplot.imagesc(decode2_img,'decode2')
 
             local err = Gaussian:forward(f, batch)
             local df_dw = Gaussian:backward(f, batch)
-						
+
             va:backward(batch,df_dw)
 
             local KLDerr = KLD:forward(va:get(1).output, batch)
             local de_dw = KLD:backward(va:get(1).output, batch)
-            encoder:backward(batch,de_dw)
 
+            encoder:backward(batch,de_dw)
+print("->>>"..err.."|"..KLDerr.."|")
             local lowerbound = err  + KLDerr
 
             return lowerbound, gradients
         end
 
         x, batchlowerbound = optim.adagrad(opfunc, parameters, config, state)
-
         lowerbound = lowerbound + batchlowerbound[1]
     end
 
